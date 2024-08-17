@@ -42,6 +42,7 @@ import android.text.format.DateUtils;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.SparseArray;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 
 import androidx.annotation.Nullable;
@@ -305,6 +306,10 @@ public abstract class QSTileImpl<TState extends State> implements QSTile, Lifecy
                 eventId);
         if (!mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
             mHandler.obtainMessage(H.CLICK, eventId, 0, view).sendToTarget();
+        }
+
+        if (view != null) {
+            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
         }
     }
 
