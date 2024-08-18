@@ -27,6 +27,7 @@ import android.annotation.NonNull;
 import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
@@ -246,6 +247,12 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
     private boolean mInRejectedExclusion = false;
     private boolean mIsOnLeftEdge;
     private boolean mDeferSetIsOnLeftEdge;
+
+    private float mStartX;
+    private float mStartY;
+    private float mHorizontalThreshold;
+    private float mVerticalThreshold;
+    private boolean mHorizontalThresholdReached;
 
     private boolean mIsAttached;
     private boolean mIsGestureHandlingEnabled;
@@ -467,6 +474,9 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
         mGestureNavigationSettingsObserver = new GestureNavigationSettingsObserver(
                 mMainHandler, mContext, this::onNavigationSettingsChanged);
 
+        mHorizontalThreshold = mContext.getResources().getDisplayMetrics().widthPixels * 0.25f;
+        mVerticalThreshold = mContext.getResources().getDisplayMetrics().heightPixels * 0.25f;
+        mHorizontalThresholdReached = false;
         updateCurrentUserResources();
     }
 
@@ -1051,6 +1061,8 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
                             mIsTrackpadThreeFingerSwipe),
                     mDisabledForQuickstep, mGestureBlockingActivityRunning, mIsInPip, mDisplaySize,
                     mEdgeWidthLeft, mLeftInset, mEdgeWidthRight, mRightInset, mExcludeRegion));
+            mStartX = ev.getX();
+            mStartY = ev.getY();
         } else if (mAllowGesture || mLogGesture) {
             if (!mThresholdCrossed) {
                 mEndPoint.x = (int) ev.getX();
@@ -1119,6 +1131,31 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
                 }
             }
 
+            float deltaX = Math.abs(ev.getX() - mStartX);
+            float deltaY = ev.getY() - mStartY;
+
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (!mHorizontalThresholdReached && deltaX > mHorizontalThreshold) {
+                    mHorizontalThresholdReached = true;
+                }
+
+                if (mHorizontalThresholdReached) {
+                    if (deltaY < -mVerticalThreshold) {
+                        mExtendedSwipeAction.setSwipeDirection(false);
+                        mExtendedSwipeAction.run();
+                        return;
+                    } else if (deltaY > mVerticalThreshold) {
+                        mExtendedSwipeAction.setSwipeDirection(true);
+                        mExtendedSwipeAction.run();
+                        return;
+                    }
+                }
+            }
+
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                mHorizontalThresholdReached = false;
+            }
+
             if (mAllowGesture) {
                 // forward touch
                 mEdgeBackPlugin.onMotionEvent(ev);
@@ -1160,6 +1197,55 @@ public class EdgeBackGestureHandler implements PluginListener<NavigationEdgeBack
                     /* velocityY = */ velocityY,
                     /* keyAction = */ event.getActionMasked(),
                     /* swipeEdge = */ mIsOnLeftEdge ? BackEvent.EDGE_LEFT : BackEvent.EDGE_RIGHT);
+        }
+    }
+
+    private class ExtendedSwipeAction implements Runnable {
+        private boolean mIsSwipeDown;
+
+        public void setSwipeDirection(boolean isSwipeDown) {
+            this.mIsSwipeDown = isSwipeDown;
+        }
+
+        @Override
+        public void run() {
+            triggerAction(mIsSwipeDown);
+        }
+    }
+
+    private ExtendedSwipeAction mExtendedSwipeAction = new ExtendedSwipeAction();
+
+    private void triggerAction(boolean isSwipeDown) {
+        prepareForAction();
+
+        if (isSwipeDown) {
+            launchHomeScreen();
+        } else {
+            showRecentApps();
+        }
+    }
+
+    private void prepareForAction() {
+        // Cancel ongoing touch events before triggering the action
+        final long now = SystemClock.uptimeMillis();
+        final MotionEvent cancelEvent = MotionEvent.obtain(now, now,
+                MotionEvent.ACTION_CANCEL, 0.0f, 0.0f, 0);
+        cancelGesture(cancelEvent);
+        cancelEvent.recycle();
+    }
+
+    private void launchHomeScreen() {
+        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+        homeIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        mContext.startActivity(homeIntent);
+    }
+
+    private void showRecentApps() {
+        try {
+            mOverviewProxyService.getProxy().onOverviewShown(false);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Failed to show overview", e);
         }
     }
 
